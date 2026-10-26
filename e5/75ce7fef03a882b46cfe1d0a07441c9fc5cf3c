@@ -1,0 +1,16 @@
+examples/vk_interop_share/executor.c
+  h_03360edcd9e88f 6,8,11-24,40-41,78-80,105
+examples/vk_interop_share/src/main.rs
+  h_03360edcd9e88f 30,61,71-75,108-111,113-128,180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e575ce7fef03a882b46cfe1d0a07441c9fc5cf3c",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}
