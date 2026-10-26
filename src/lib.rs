@@ -34,6 +34,8 @@ pub mod conv;
 pub mod logging;
 pub mod unimplemented;
 pub mod utils;
+#[cfg(feature = "vulkan")]
+pub mod vk_interop;
 
 pub mod native {
     #![allow(non_upper_case_globals)]

@@ -1,0 +1,17 @@
+[package]
+name = "share-proto"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "vulkan", "wgsl"] }
+ash = "0.38"
+pollster = "0.4"
+env_logger = "0.11"
+log = "0.4"
+
+[build-dependencies]
+cc = "1"
