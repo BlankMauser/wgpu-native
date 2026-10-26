@@ -3,8 +3,24 @@
  * Handoff state for the shared texture: TextureBinding (shader-read). */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "webgpu.h"
+#include "wgpu.h"
 #include "wgpu_vk_interop.h"
+
+static int g_errors;
+static void on_log(WGPULogLevel l, WGPUStringView m, void *u) {
+  (void)u;
+  if (l <= WGPULogLevel_Warn) {
+    if (l == WGPULogLevel_Error) g_errors++;
+    fprintf(stderr, "[wgpu-native %d] %.*s\n", (int)l, (int)m.length, m.data);
+  }
+}
+int exec_errors(void) { return g_errors; }
+/* HANDOFF_RT: agree on RenderAttachment instead of TextureBinding. */
+static WGPUTextureUsage handoff_state(void) {
+  return getenv("HANDOFF_RT") ? WGPUTextureUsage_RenderAttachment : WGPUTextureUsage_TextureBinding;
+}
 
 static WGPUDevice g_device;
 static WGPUQueue g_queue;
@@ -21,6 +37,8 @@ static const char *WGSL =
     "@fragment fn fs() -> @location(0) vec4f { return vec4f(1.0, 0.5, 0.0, 1.0); }\n";
 
 int exec_init(const WGPUVulkanDeviceHandlesExt *h) {
+  wgpuSetLogCallback(on_log, NULL);
+  wgpuSetLogLevel(WGPULogLevel_Warn);
   g_device = wgpuCreateDeviceFromVulkanExt(h, NULL);
   if (!g_device) return 1;
   g_queue = wgpuDeviceGetQueue(g_device);
@@ -57,7 +75,9 @@ int exec_import(uint64_t image, uint32_t w, uint32_t hgt) {
   td.size.height = hgt;
   td.size.depthOrArrayLayers = 1;
   td.format = WGPUTextureFormat_RGBA8Unorm;
-  g_target = wgpuDeviceImportVulkanImageExt(g_device, image, &td, WGPUTextureUsage_TextureBinding);
+  /* BAD_HANDOFF: positive control for the validation layer (lie about the state). */
+  WGPUTextureUsage state = getenv("BAD_HANDOFF") ? WGPUTextureUsage_CopyDst : handoff_state();
+  g_target = wgpuDeviceImportVulkanImageExt(g_device, image, &td, state);
   return g_target ? 0 : 1;
 }
 
@@ -82,7 +102,7 @@ void exec_frame(int frame) {
   }
   wgpuRenderPassEncoderEnd(pass);
   wgpuRenderPassEncoderRelease(pass);
-  wgpuCommandEncoderTransitionTextureExt(enc, g_target, WGPUTextureUsage_TextureBinding);
+  wgpuCommandEncoderTransitionTextureExt(enc, g_target, handoff_state());
   WGPUCommandBuffer cb = wgpuCommandEncoderFinish(enc, NULL);
   wgpuQueueSubmit(g_queue, 1, &cb);
   wgpuCommandBufferRelease(cb);

@@ -27,6 +27,7 @@ extern "C" {
     fn exec_import(image: u64, w: u32, h: u32) -> i32;
     fn exec_frame(frame: i32);
     fn exec_shutdown();
+    fn exec_errors() -> i32;
 }
 
 const W: u32 = 64;
@@ -57,7 +58,7 @@ fn readback(device: &wgpu::Device, queue: &wgpu::Queue, tex: &wgpu::Texture) -> 
     queue.submit([enc.finish()]);
     buf.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let data = buf.slice(..).get_mapped_range().to_vec();
+    let data = buf.slice(..).get_mapped_range().expect("mapped").to_vec();
     data
 }
 
@@ -67,7 +68,11 @@ fn handoff(enc: &mut wgpu::CommandEncoder, tex: &wgpu::Texture) {
         std::iter::once(wgpu::TextureTransition {
             texture: tex,
             selector: None,
-            state: wgpu::TextureUses::RESOURCE,
+            state: if std::env::var_os("HANDOFF_RT").is_some() {
+                wgpu::TextureUses::COLOR_TARGET
+            } else {
+                wgpu::TextureUses::RESOURCE
+            },
         }),
     );
 }
@@ -100,8 +105,27 @@ fn main() {
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    // Host-side tracker to the handoff state before the executor sees it.
+    // Host side, before the first handoff: (1) write the texture once, so the
+    // host's wgpu-core init tracker marks it initialized (otherwise the host's
+    // first copy lazily zero-clears it, discarding the executor's pixels);
+    // (2) move the host tracker to the agreed handoff state.
     let mut enc = device.create_command_encoder(&Default::default());
+    if std::env::var_os("SKIP_HOST_INIT").is_none() {
+        let view = tex.create_view(&Default::default());
+        enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("host-init"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 0.0, b: 1.0, a: 1.0 }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+    }
     handoff(&mut enc, &tex);
     queue.submit([enc.finish()]);
 
@@ -153,6 +177,7 @@ fn main() {
     println!("frame 1: green={green}/{}", W * H);
     assert_eq!(green, (W * H) as usize);
 
+    assert_eq!(unsafe { exec_errors() }, 0, "wgpu-native logged errors");
     unsafe { exec_shutdown() };
     drop(tex);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
