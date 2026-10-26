@@ -18,8 +18,9 @@
 use crate::conv::map_device_descriptor;
 use crate::native;
 use crate::{
-    handle_error, Context, ErrorSinkRaw, QueueId, TextureData, WGPUCommandEncoderImpl,
-    WGPUDeviceImpl, WGPUTextureImpl, DEFAULT_DEVICE_LOST_HANDLER,
+    handle_error, Context, ErrorSinkRaw, QueueId, TextureData, WGPUAdapterImpl,
+    WGPUCommandEncoderImpl, WGPUDeviceImpl, WGPUInstanceImpl, WGPUTextureImpl,
+    DEFAULT_DEVICE_LOST_HANDLER,
 };
 use ash::vk::{self, Handle};
 use parking_lot::Mutex;
@@ -68,13 +69,13 @@ fn map_state(usage: native::WGPUTextureUsage) -> wgt::TextureUses {
     }
 }
 
-/// Wrap an existing Vulkan device. `descriptor` lists the features and limits
-/// the `VkDevice` was created with (NULL: none, WebGPU default limits).
+/// Wrap the exporter's `VkInstance` (never destroyed here). The instance has
+/// only a Vulkan backend; it serves `wgpuInstanceProcessEvents`, waits and
+/// the adapter/device calls below.
 #[no_mangle]
-pub unsafe extern "C" fn wgpuCreateDeviceFromVulkanExt(
+pub unsafe extern "C" fn wgpuCreateInstanceFromVulkanExt(
     handles: Option<&WGPUVulkanDeviceHandlesExt>,
-    descriptor: Option<&native::WGPUDeviceDescriptor>,
-) -> native::WGPUDevice {
+) -> native::WGPUInstance {
     let h = handles.expect("invalid handles");
     let static_fn = ash::StaticFn {
         get_instance_proc_addr: std::mem::transmute::<*const c_void, vk::PFN_vkGetInstanceProcAddr>(
@@ -85,7 +86,7 @@ pub unsafe extern "C" fn wgpuCreateDeviceFromVulkanExt(
     let raw_instance = ash::Instance::load(entry.static_fn(), vk::Instance::from_raw(h.instance));
     let hal_instance = match hal::vulkan::Instance::from_raw(
         entry,
-        raw_instance.clone(),
+        raw_instance,
         h.instance_api_version,
         0,
         None,
@@ -97,51 +98,99 @@ pub unsafe extern "C" fn wgpuCreateDeviceFromVulkanExt(
     ) {
         Ok(i) => i,
         Err(e) => {
-            log::error!("wgpuCreateDeviceFromVulkanExt: {e}");
+            log::error!("wgpuCreateInstanceFromVulkanExt: {e}");
             return std::ptr::null();
         }
+    };
+    Arc::into_raw(Arc::new(WGPUInstanceImpl {
+        context: Arc::new(Context::from_hal_instance::<hal::api::Vulkan>(
+            "wgpu-native (shared VkInstance)",
+            hal_instance,
+        )),
+    }))
+}
+
+/// The exporter's `VkPhysicalDevice` as an adapter of `instance` (which must
+/// come from `wgpuCreateInstanceFromVulkanExt`).
+#[no_mangle]
+pub unsafe extern "C" fn wgpuInstanceCreateAdapterFromVulkanExt(
+    instance: native::WGPUInstance,
+    handles: Option<&WGPUVulkanDeviceHandlesExt>,
+) -> native::WGPUAdapter {
+    let instance = instance.as_ref().expect("invalid instance");
+    let h = handles.expect("invalid handles");
+    let context = &instance.context;
+    let Some(hal_instance) = context.instance_as_hal::<hal::api::Vulkan>() else {
+        log::error!("wgpuInstanceCreateAdapterFromVulkanExt: not a Vulkan instance");
+        return std::ptr::null();
     };
     let Some(exposed) =
         hal_instance.expose_adapter(vk::PhysicalDevice::from_raw(h.physical_device))
     else {
-        log::error!("wgpuCreateDeviceFromVulkanExt: physical device not usable");
+        log::error!("wgpuInstanceCreateAdapterFromVulkanExt: physical device not usable");
         return std::ptr::null();
     };
+    let id = context.create_adapter_from_hal(exposed.into(), None);
+    Arc::into_raw(Arc::new(WGPUAdapterImpl {
+        context: context.clone(),
+        id,
+    }))
+}
+
+/// Wrap the exporter's `VkDevice` and queue (never destroyed here).
+/// `descriptor` lists the features and limits the `VkDevice` was created with
+/// (NULL: none, WebGPU default limits).
+#[no_mangle]
+pub unsafe extern "C" fn wgpuAdapterCreateDeviceFromVulkanExt(
+    adapter: native::WGPUAdapter,
+    handles: Option<&WGPUVulkanDeviceHandlesExt>,
+    descriptor: Option<&native::WGPUDeviceDescriptor>,
+) -> native::WGPUDevice {
+    let adapter = adapter.as_ref().expect("invalid adapter");
+    let h = handles.expect("invalid handles");
+    let context = &adapter.context;
     let (desc, _) = match descriptor {
         Some(d) => map_device_descriptor(d, wgt::Limits::default(), None),
         None => (wgt::DeviceDescriptor::default(), None),
     };
-    let raw_device = ash::Device::load(raw_instance.fp_v1_0(), vk::Device::from_raw(h.device));
-    let open = match exposed.adapter.device_from_raw(
-        raw_device,
-        Some(Box::new(|| {})),
-        &leak_names(h.device_extensions, h.device_extension_count),
-        desc.required_features,
-        &desc.required_limits,
-        &desc.memory_hints,
-        h.queue_family_index,
-        h.queue_index,
-    ) {
-        Ok(o) => o,
-        Err(e) => {
-            log::error!("wgpuCreateDeviceFromVulkanExt: {e}");
+    let open = {
+        let Some(hal_instance) = context.instance_as_hal::<hal::api::Vulkan>() else {
+            log::error!("wgpuAdapterCreateDeviceFromVulkanExt: not a Vulkan instance");
             return std::ptr::null();
+        };
+        let raw_device = ash::Device::load(
+            hal_instance.shared_instance().raw_instance().fp_v1_0(),
+            vk::Device::from_raw(h.device),
+        );
+        let Some(hal_adapter) = context.adapter_as_hal::<hal::api::Vulkan>(adapter.id) else {
+            log::error!("wgpuAdapterCreateDeviceFromVulkanExt: not a Vulkan adapter");
+            return std::ptr::null();
+        };
+        match hal_adapter.device_from_raw(
+            raw_device,
+            Some(Box::new(|| {})),
+            &leak_names(h.device_extensions, h.device_extension_count),
+            desc.required_features,
+            &desc.required_limits,
+            &desc.memory_hints,
+            h.queue_family_index,
+            h.queue_index,
+        ) {
+            Ok(o) => o,
+            Err(e) => {
+                log::error!("wgpuAdapterCreateDeviceFromVulkanExt: {e}");
+                return std::ptr::null();
+            }
         }
     };
-    let context = Arc::new(Context::from_hal_instance::<hal::api::Vulkan>(
-        "wgpu-native (shared VkDevice)",
-        hal_instance,
-    ));
-    let adapter_id = context.create_adapter_from_hal(exposed.into(), None);
     let (device_id, queue_id) =
-        match context.create_device_from_hal(adapter_id, open.into(), &desc, None, None) {
+        match context.create_device_from_hal(adapter.id, open.into(), &desc, None, None) {
             Ok(ids) => ids,
             Err(e) => {
-                log::error!("wgpuCreateDeviceFromVulkanExt: {e}");
+                log::error!("wgpuAdapterCreateDeviceFromVulkanExt: {e}");
                 return std::ptr::null();
             }
         };
-    context.adapter_drop(adapter_id);
     Arc::into_raw(Arc::new_cyclic(|device| WGPUDeviceImpl {
         context: context.clone(),
         id: device_id,
@@ -154,6 +203,29 @@ pub unsafe extern "C" fn wgpuCreateDeviceFromVulkanExt(
             device.clone(),
         ))),
     }))
+}
+
+/// Convenience: the three calls above, keeping only the device (the
+/// instance and adapter stay alive through the device's shared context).
+#[no_mangle]
+pub unsafe extern "C" fn wgpuCreateDeviceFromVulkanExt(
+    handles: Option<&WGPUVulkanDeviceHandlesExt>,
+    descriptor: Option<&native::WGPUDeviceDescriptor>,
+) -> native::WGPUDevice {
+    let instance = wgpuCreateInstanceFromVulkanExt(handles);
+    if instance.is_null() {
+        return std::ptr::null();
+    }
+    let adapter = wgpuInstanceCreateAdapterFromVulkanExt(instance, handles);
+    let device = if adapter.is_null() {
+        std::ptr::null()
+    } else {
+        let d = wgpuAdapterCreateDeviceFromVulkanExt(adapter, handles, descriptor);
+        Arc::decrement_strong_count(adapter);
+        d
+    };
+    Arc::decrement_strong_count(instance);
+    device
 }
 
 /// Import a `VkImage` owned by the exporter. `initialState` is the single

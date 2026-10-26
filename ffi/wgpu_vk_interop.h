@@ -26,7 +26,16 @@ typedef struct WGPUVulkanDeviceHandlesExt {
     uint32_t queueIndex;
 } WGPUVulkanDeviceHandlesExt;
 
-/* descriptor: features/limits the VkDevice was created with (NULL: none,
+/* Instance -> adapter -> device over the exporter's Vulkan objects (none of
+ * them is ever destroyed by wgpu-native). Each returns NULL on failure. */
+WGPUInstance wgpuCreateInstanceFromVulkanExt(WGPUVulkanDeviceHandlesExt const * handles);
+WGPUAdapter wgpuInstanceCreateAdapterFromVulkanExt(WGPUInstance instance,
+                                                   WGPUVulkanDeviceHandlesExt const * handles);
+WGPUDevice wgpuAdapterCreateDeviceFromVulkanExt(WGPUAdapter adapter,
+                                                WGPUVulkanDeviceHandlesExt const * handles,
+                                                WGPUDeviceDescriptor const * descriptor);
+/* Convenience: all three, returning only the device.
+ * descriptor: features/limits the VkDevice was created with (NULL: none,
  * WebGPU default limits). Returns NULL on failure. Never destroys the VkDevice. */
 WGPUDevice wgpuCreateDeviceFromVulkanExt(WGPUVulkanDeviceHandlesExt const * handles,
                                          WGPUDeviceDescriptor const * descriptor);
