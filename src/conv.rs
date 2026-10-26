@@ -1953,6 +1953,9 @@ pub fn map_surface_configuration(
         width: config.width,
         height: config.height,
         present_mode: map_present_mode(config.presentMode).unwrap_or(wgt::PresentMode::Fifo),
+        // wgpu 30: webgpu.h (v29 headers) has no color space field; Auto keeps
+        // wgpu 29's behaviour (sRGB, or extended-linear for Rgba16Float).
+        color_space: wgt::SurfaceColorSpace::Auto,
         alpha_mode: map_composite_alpha_mode(config.alphaMode)
             .expect("invalid alpha mode for surface configuration"),
         view_formats: make_slice(config.viewFormats, config.viewFormatCount)
@@ -2044,6 +2047,8 @@ pub fn map_shader_runtime_checks(
         mesh_shader_primitive_indices_clamp: (value
             & native::WGPUShaderRuntimeChecks_MeshShaderPrimitiveIndicesClamp)
             != 0,
+        // wgpu 30: no header flag; wgpu 29 always guarded integer division.
+        int_div_checks: true,
     }
 }
 
