@@ -1,0 +1,23 @@
+Cargo.lock
+  s_625290436574c7::t_ec73bd0fc7968d 1208
+Cargo.toml
+  s_625290436574c7::t_726a85073ecfe9 57,125-128
+src/lib.rs
+  s_625290436574c7::t_62142df48855c3 37-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a11f3e363f23cde666aba9d054642e7eb59a9d38",
+  "prompts": {},
+  "sessions": {
+    "s_625290436574c7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17a04-2ef4-7842-9a72-6aea2c93f017",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}
