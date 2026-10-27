@@ -39,12 +39,23 @@ WGPUDevice wgpuAdapterCreateDeviceFromVulkanExt(WGPUAdapter adapter,
  * WebGPU default limits). Returns NULL on failure. Never destroys the VkDevice. */
 WGPUDevice wgpuCreateDeviceFromVulkanExt(WGPUVulkanDeviceHandlesExt const * handles,
                                          WGPUDeviceDescriptor const * descriptor);
-/* initialState: exactly one WGPUTextureUsage flag (None = undefined contents). */
+/* initialState: exactly one WGPUTextureUsage flag (None = undefined contents),
+ * part of the descriptor's usage. RenderAttachment on a depth/stencil format
+ * is the depth-stencil attachment state. The descriptor must be the image's
+ * own (2D, 1 mip, 1 sample); Vulkan cannot check it, so build it from the
+ * exporter's texture, never by hand. */
 WGPUTexture wgpuDeviceImportVulkanImageExt(WGPUDevice device, uint64_t vkImage,
                                            WGPUTextureDescriptor const * descriptor,
                                            WGPUTextureUsage initialState);
-void wgpuCommandEncoderTransitionTextureExt(WGPUCommandEncoder encoder, WGPUTexture texture,
-                                            WGPUTextureUsage state);
+/* Returns 1, or 0 (nothing recorded) with a message for
+ * wgpuVulkanInteropLastErrorExt. state: exactly one WGPUTextureUsage flag. */
+WGPUBool wgpuCommandEncoderTransitionTextureExt(WGPUCommandEncoder encoder, WGPUTexture texture,
+                                                WGPUTextureUsage state);
+/* This thread's last interop error: copies it (UTF-8, not NUL-terminated)
+ * into out when capacity suffices; returns its length (0: none). Every entry
+ * point above clears it on entry and sets it when it returns NULL / 0; none
+ * of them aborts on bad input. */
+size_t wgpuVulkanInteropLastErrorExt(char * out, size_t capacity);
 
 #ifdef __cplusplus
 }
