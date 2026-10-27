@@ -1,0 +1,16 @@
+crates/wgpu-vk-handoff/src/lib.rs
+  h_03360edcd9e88f 15-19
+ffi/wgpu_vk_interop.h
+  h_03360edcd9e88f 33-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3fc968147220042fd644c1a6fd2d19036f5c0f9",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}
