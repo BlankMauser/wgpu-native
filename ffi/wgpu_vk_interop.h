@@ -26,6 +26,29 @@ typedef struct WGPUVulkanDeviceHandlesExt {
     uint32_t queueIndex;
 } WGPUVulkanDeviceHandlesExt;
 
+typedef void (*WGPUVulkanHandoffLockExt)(void * context);
+
+/* Everything the adopting side needs for one shared texture, built by the
+ * owner from its own objects (Rust: crates/wgpu-vk-handoff), so nothing is
+ * typed by hand. Valid while the owner keeps it alive. */
+typedef struct WGPUVulkanHandoffExt {
+    uint32_t structSize;               /* sizeof(WGPUVulkanHandoffExt) */
+    WGPUVulkanDeviceHandlesExt device;
+    uint64_t image;                    /* VkImage: 2D, 1 layer, 1 mip, 1 sample */
+    uint32_t width;
+    uint32_t height;
+    WGPUTextureFormat format;
+    WGPUTextureUsage usage;            /* the texture's usage */
+    WGPUTextureUsage state;            /* the agreed handoff state: one flag */
+    /* The owner's lock for the shared queue (both NULL: one thread only).
+     * The owner takes it around its own submissions; the adopting side around
+     * its submissions and teardown. Calling into the adopting side while
+     * holding it deadlocks. */
+    WGPUVulkanHandoffLockExt lock;
+    WGPUVulkanHandoffLockExt unlock;
+    void * lockContext;
+} WGPUVulkanHandoffExt;
+
 /* Instance -> adapter -> device over the exporter's Vulkan objects (none of
  * them is ever destroyed by wgpu-native). Each returns NULL on failure. */
 WGPUInstance wgpuCreateInstanceFromVulkanExt(WGPUVulkanDeviceHandlesExt const * handles);
