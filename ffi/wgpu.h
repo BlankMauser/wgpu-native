@@ -1459,6 +1459,20 @@ typedef enum WGPUNativeAddressMode
     WGPUNativeAddressMode_Force32 = 0x7FFFFFFF
 } WGPUNativeAddressMode WGPU_ENUM_ATTRIBUTE;
 
+typedef enum WGPUNativeLoadOp
+{
+    /**
+     * wgpu's `LoadOp::DontCare` (BlankMauser fork): the attachment's previous
+     * contents are undefined at the start of the render pass. Every pixel must
+     * be written before it is read (including blending) or stored. The fastest
+     * load op when a pass overwrites the whole attachment. Backends without it
+     * pick another load op; refused under InstanceFlags::STRICT_WEBGPU_COMPLIANCE.
+     * Accepted wherever a `WGPULoadOp` is (colour and depth/stencil loadOp).
+     */
+    WGPUNativeLoadOp_DontCare = 0x00030001,
+    WGPUNativeLoadOp_Force32 = 0x7FFFFFFF
+} WGPUNativeLoadOp WGPU_ENUM_ATTRIBUTE;
+
 typedef enum WGPUSamplerBorderColor
 {
     WGPUSamplerBorderColor_Undefined = 0x00000000,
@@ -1492,6 +1506,12 @@ extern "C"
     void wgpuSetLogCallback(WGPULogCallback callback, void *userdata);
 
     void wgpuSetLogLevel(WGPULogLevel level);
+
+    /**
+     * Returns `WGPUNativeLoadOp_DontCare` (BlankMauser fork); its presence is
+     * how a dynamically loaded caller knows the load op is understood.
+     */
+    WGPULoadOp wgpuNativeLoadOpDontCare(void);
 
     uint32_t wgpuGetVersion(void);
 

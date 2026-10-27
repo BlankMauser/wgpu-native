@@ -840,6 +840,12 @@ pub fn map_load_op<T>(
     match command {
         native::WGPULoadOp_Load => Some(wgc::command::LoadOp::Load),
         native::WGPULoadOp_Clear => Some(wgc::command::LoadOp::Clear(clear_value)),
+        // SAFETY: the caller asked for undefined contents; wgpu-native's
+        // contract (wgpu.h WGPUNativeLoadOp_DontCare) passes on wgpu's: every
+        // pixel is written before it is read or stored.
+        native::WGPUNativeLoadOp_DontCare => {
+            Some(wgc::command::LoadOp::DontCare(unsafe { wgt::LoadOpDontCare::enabled() }))
+        }
         _ => None,
     }
 }

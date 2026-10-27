@@ -4875,3 +4875,10 @@ pub unsafe extern "C" fn wgpuRenderPassEncoderWriteTimestamp(
         ),
     }
 }
+
+/// `WGPUNativeLoadOp_DontCare`; present so dynamically loaded callers can
+/// tell the load op is understood (wgpu.h).
+#[no_mangle]
+pub extern "C" fn wgpuNativeLoadOpDontCare() -> native::WGPULoadOp {
+    native::WGPUNativeLoadOp_DontCare as native::WGPULoadOp
+}
