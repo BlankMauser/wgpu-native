@@ -12,6 +12,11 @@
 //! - Take the [`QueueLock`] around every submission to the shared queue, and
 //!   around dropping the device/queue. Never call into the adopting side while
 //!   holding it (it takes the same lock: deadlock).
+//! - The lock's `context` must stay valid until the adopting side's teardown
+//!   returns (it copies the lock and calls it until then); the `Handoff`
+//!   itself is read only during adoption and import.
+//! - `VulkanHandoff` is append-only (see the C header): fields are never
+//!   removed, reordered or reinterpreted; `struct_size` is the version.
 //! - Keep the `Handoff` alive, and destroy the device or texture only after
 //!   the adopting side released what it adopted/imported (LunarFenrir:
 //!   `Gpu::close`, `Gpu::release_shared` or a `Reloader::resize`).

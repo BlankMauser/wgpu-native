@@ -30,7 +30,19 @@ typedef void (*WGPUVulkanHandoffLockExt)(void * context);
 
 /* Everything the adopting side needs for one shared texture, built by the
  * owner from its own objects (Rust: crates/wgpu-vk-handoff), so nothing is
- * typed by hand. Valid while the owner keeps it alive. */
+ * typed by hand.
+ *
+ * Lifetimes: the struct (and the extension name arrays it points to) must
+ * stay valid while the adopting side reads it, i.e. during adoption and
+ * import; it copies what it keeps. The lock functions and lockContext are
+ * copied and called until the adopting side's teardown returns (LunarFenrir:
+ * Gpu::close), so lockContext must stay valid until then.
+ *
+ * Versioning: append-only. Fields are never removed, reordered, resized or
+ * reinterpreted; new fields are only appended. structSize is the version: a
+ * reader requires structSize >= the size of the layout it knows, and a newer
+ * writer's extra fields are ignored. (No separate version field: with one
+ * layout rule there is nothing for it to say that structSize does not.) */
 typedef struct WGPUVulkanHandoffExt {
     uint32_t structSize;               /* sizeof(WGPUVulkanHandoffExt) */
     WGPUVulkanDeviceHandlesExt device;
