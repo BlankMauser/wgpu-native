@@ -63,6 +63,9 @@ pub struct VulkanHandoff {
     pub lock: Option<LockFn>,
     pub unlock: Option<LockFn>,
     pub lock_context: *mut c_void,
+    /// Appended: the device's features as `WGPUFeatureName` values.
+    pub feature_count: usize,
+    pub features: *const u32,
 }
 
 /// The owner's lock for the shared queue, exported through the handoff.
@@ -78,7 +81,37 @@ pub struct Handoff {
     raw: Box<VulkanHandoff>,
     _instance_extensions: Vec<*const c_char>,
     _device_extensions: Vec<*const c_char>,
+    _features: Vec<u32>,
     state: wgpu::TextureUses,
+}
+
+/// The `WGPUFeatureName` values of the features a handoff can carry: the
+/// WebGPU features wgpu-native maps, and the timestamp features. Others are
+/// left out (the adopter then sees a subset, which is safe).
+pub fn webgpu_features(features: wgpu::Features) -> Vec<u32> {
+    use wgpu::Features as F;
+    let table: &[(F, u32)] = &[
+        (F::DEPTH_CLIP_CONTROL, 0x02),
+        (F::DEPTH32FLOAT_STENCIL8, 0x03),
+        (F::TEXTURE_COMPRESSION_BC, 0x04),
+        (F::TEXTURE_COMPRESSION_BC_SLICED_3D, 0x05),
+        (F::TEXTURE_COMPRESSION_ETC2, 0x06),
+        (F::TEXTURE_COMPRESSION_ASTC, 0x07),
+        (F::TEXTURE_COMPRESSION_ASTC_SLICED_3D, 0x08),
+        (F::TIMESTAMP_QUERY, 0x09),
+        (F::INDIRECT_FIRST_INSTANCE, 0x0A),
+        (F::SHADER_F16, 0x0B),
+        (F::RG11B10UFLOAT_RENDERABLE, 0x0C),
+        (F::BGRA8UNORM_STORAGE, 0x0D),
+        (F::FLOAT32_FILTERABLE, 0x0E),
+        (F::FLOAT32_BLENDABLE, 0x0F),
+        (F::CLIP_DISTANCES, 0x10),
+        (F::DUAL_SOURCE_BLENDING, 0x11),
+        // wgpu-native (wgpu.h WGPUNativeFeature).
+        (F::TIMESTAMP_QUERY_INSIDE_ENCODERS, 0x0003_0024),
+        (F::TIMESTAMP_QUERY_INSIDE_PASSES, 0x0003_0025),
+    ];
+    table.iter().filter(|(f, _)| features.contains(*f)).map(|(_, v)| *v).collect()
 }
 
 /// The `WGPUTextureFormat` value of a wgpu format (the formats a handoff
@@ -188,6 +221,7 @@ impl Handoff {
         let instance_extensions: Vec<*const c_char> = instance.extensions().iter().map(|e| e.as_ptr()).collect();
         let device_extensions: Vec<*const c_char> =
             hal.enabled_device_extensions().iter().map(|e| e.as_ptr()).collect();
+        let features = webgpu_features(device.features());
         let raw = Box::new(VulkanHandoff {
             struct_size: std::mem::size_of::<VulkanHandoff>() as u32,
             device: VulkanDeviceHandles {
@@ -212,12 +246,15 @@ impl Handoff {
             lock: lock.map(|l| l.lock),
             unlock: lock.map(|l| l.unlock),
             lock_context: lock.map_or(std::ptr::null_mut(), |l| l.context),
+            feature_count: features.len(),
+            features: features.as_ptr(),
         });
         drop(hal);
         Ok(Handoff {
             raw,
             _instance_extensions: instance_extensions,
             _device_extensions: device_extensions,
+            _features: features,
             state,
         })
     }

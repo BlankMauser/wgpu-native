@@ -59,6 +59,13 @@ typedef struct WGPUVulkanHandoffExt {
     WGPUVulkanHandoffLockExt lock;
     WGPUVulkanHandoffLockExt unlock;
     void * lockContext;
+    /* Appended (2026-10-27; present when structSize covers it): the features
+     * the VkDevice was created with, as WGPUFeatureName values (WebGPU and
+     * wgpu-native), for the adopter's WGPUDeviceDescriptor.requiredFeatures.
+     * A subset is safe (features the owner cannot express are left out); a
+     * feature the device lacks is not. */
+    size_t featureCount;
+    WGPUFeatureName const * features;
 } WGPUVulkanHandoffExt;
 
 /* Instance -> adapter -> device over the exporter's Vulkan objects (none of
