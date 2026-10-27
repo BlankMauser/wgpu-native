@@ -476,3 +476,79 @@ pub unsafe extern "C" fn wgpuCommandEncoderTransitionTextureExt(
         Ok(1)
     })
 }
+
+/// Objects users still hold on `instance`'s devices, in every wgpu-core
+/// registry except adapters, devices and queues (command encoders and render
+/// bundle encoders included, which WGPUHubReport lacks): a text such as
+/// `"buffers=1, command_encoders=2"`, empty when there are none. Copies it
+/// into `out` (UTF-8, not NUL-terminated) when `capacity` suffices; returns its
+/// length. An adopter checks this before releasing an adopted device: anything
+/// listed keeps the device's own Vulkan objects alive on the owner's VkDevice.
+#[no_mangle]
+pub unsafe extern "C" fn wgpuInstanceLiveObjectsExt(
+    instance: native::WGPUInstance,
+    out: *mut c_char,
+    capacity: usize,
+) -> usize {
+    guarded("wgpuInstanceLiveObjectsExt", 0, || {
+        let instance = instance.as_ref().ok_or("null instance")?;
+        let report = instance.context.generate_report();
+        // Exhaustive on purpose: a registry wgpu-core adds is a compile error
+        // here, not a silent hole in the check.
+        let wgc::hub::HubReport {
+            adapters: _,
+            devices: _,
+            queues: _,
+            pipeline_layouts,
+            shader_modules,
+            bind_group_layouts,
+            bind_groups,
+            command_encoders,
+            command_buffers,
+            render_bundles,
+            render_pipelines,
+            compute_pipelines,
+            pipeline_caches,
+            query_sets,
+            buffers,
+            textures,
+            texture_views,
+            external_textures,
+            samplers,
+            render_passes,
+            compute_passes,
+            render_bundle_encoders,
+        } = report.hub;
+        let all = [
+            ("pipeline_layouts", pipeline_layouts),
+            ("shader_modules", shader_modules),
+            ("bind_group_layouts", bind_group_layouts),
+            ("bind_groups", bind_groups),
+            ("command_encoders", command_encoders),
+            ("command_buffers", command_buffers),
+            ("render_bundles", render_bundles),
+            ("render_pipelines", render_pipelines),
+            ("compute_pipelines", compute_pipelines),
+            ("pipeline_caches", pipeline_caches),
+            ("query_sets", query_sets),
+            ("buffers", buffers),
+            ("textures", textures),
+            ("texture_views", texture_views),
+            ("external_textures", external_textures),
+            ("samplers", samplers),
+            ("render_passes", render_passes),
+            ("compute_passes", compute_passes),
+            ("render_bundle_encoders", render_bundle_encoders),
+        ];
+        let text = all
+            .iter()
+            .filter(|(_, r)| r.num_kept_from_user > 0)
+            .map(|(name, r)| format!("{name}={}", r.num_kept_from_user))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !out.is_null() && capacity >= text.len() {
+            std::ptr::copy_nonoverlapping(text.as_ptr(), out as *mut u8, text.len());
+        }
+        Ok(text.len())
+    })
+}

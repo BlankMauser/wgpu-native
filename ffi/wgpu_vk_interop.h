@@ -98,6 +98,13 @@ WGPUBool wgpuCommandEncoderTransitionTextureExt(WGPUCommandEncoder encoder, WGPU
  * point above clears it on entry and sets it when it returns NULL / 0; none
  * of them aborts on bad input. */
 size_t wgpuVulkanInteropLastErrorExt(char * out, size_t capacity);
+/* Objects users still hold on the instance's devices, in every registry except
+ * adapters, devices and queues (command encoders and render bundle encoders
+ * included; WGPUHubReport lacks them), as "buffers=1, command_encoders=2"
+ * (empty: none). Copies it (UTF-8, not NUL-terminated) into out when capacity
+ * suffices; returns its length. Check it before releasing an adopted device:
+ * anything listed keeps the device's own Vulkan objects alive. */
+size_t wgpuInstanceLiveObjectsExt(WGPUInstance instance, char * out, size_t capacity);
 
 #ifdef __cplusplus
 }
