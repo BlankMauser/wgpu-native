@@ -36,6 +36,8 @@ pub mod unimplemented;
 pub mod utils;
 #[cfg(feature = "vulkan")]
 pub mod vk_interop;
+#[cfg(feature = "adopt-core")]
+pub mod adopt_core;
 
 pub mod native {
     #![allow(non_upper_case_globals)]
@@ -50,10 +52,12 @@ pub type Context = wgc::global::Global;
 pub struct WGPUAdapterImpl {
     context: Arc<Context>,
     id: id::AdapterId,
+    /// Adopted from a host that owns the id (`adopt_core`): never dropped here.
+    adopted: bool,
 }
 impl Drop for WGPUAdapterImpl {
     fn drop(&mut self) {
-        if !thread::panicking() {
+        if !thread::panicking() && !self.adopted {
             let context = &self.context;
             context.adapter_drop(self.id);
         }
@@ -167,10 +171,12 @@ impl Drop for WGPUComputePipelineImpl {
 struct QueueId {
     context: Arc<Context>,
     id: id::QueueId,
+    /// Adopted from a host that owns the id (`adopt_core`): never dropped here.
+    adopted: bool,
 }
 impl Drop for QueueId {
     fn drop(&mut self) {
-        if !thread::panicking() {
+        if !thread::panicking() && !self.adopted {
             let context = &self.context;
             context.queue_drop(self.id);
         }
@@ -182,10 +188,12 @@ pub struct WGPUDeviceImpl {
     id: id::DeviceId,
     queue: Arc<QueueId>,
     error_sink: ErrorSink,
+    /// Adopted from a host that owns the id (`adopt_core`): never polled or dropped here.
+    adopted: bool,
 }
 impl Drop for WGPUDeviceImpl {
     fn drop(&mut self) {
-        if !thread::panicking() {
+        if !thread::panicking() && !self.adopted {
             let context = &self.context;
 
             // pre v27 this would wait for 60 seconds instead of waiting indefinitely
@@ -366,10 +374,12 @@ pub struct WGPUTextureImpl {
     surface_id: Option<id::SurfaceId>,
     // Shared bool between Texture & Surface to track surface_present calls
     has_surface_presented: Arc<atomic::AtomicBool>,
+    /// Adopted from a host that owns the id (`adopt_core`): never dropped here.
+    adopted: bool,
 }
 impl Drop for WGPUTextureImpl {
     fn drop(&mut self) {
-        if thread::panicking() {
+        if thread::panicking() || self.adopted {
             return;
         }
         if let Some(surface_id) = self.surface_id {
@@ -869,9 +879,11 @@ pub unsafe extern "C" fn wgpuAdapterRequestDevice(
                 }
                 let error_sink = Arc::new(Mutex::new(error_sink));
                 WGPUDeviceImpl {
+                    adopted: false,
                     context: context.clone(),
                     id: device_id,
                     queue: Arc::new(QueueId {
+                        adopted: false,
                         context: context.clone(),
                         id: queue_id,
                     }),
@@ -2563,6 +2575,7 @@ pub unsafe extern "C" fn wgpuDeviceCreateTexture(
     }
 
     Arc::into_raw(Arc::new(WGPUTextureImpl {
+        adopted: false,
         context: context.clone(),
         id: texture_id,
         error_sink: error_sink.clone(),
@@ -2583,6 +2596,11 @@ pub unsafe extern "C" fn wgpuDeviceCreateTexture(
 pub unsafe extern "C" fn wgpuDeviceDestroy(device: native::WGPUDevice) {
     let (device_id, context) = {
         let device = device.as_ref().expect("invalid device");
+        if device.adopted {
+            // The host owns an adopted device (adopt_core.rs): destroying it here would destroy the host's.
+            log::warn!("wgpuDeviceDestroy ignored: the device is adopted from a host that owns it");
+            return;
+        }
         (device.id, &device.context)
     };
 
@@ -2903,6 +2921,7 @@ pub unsafe extern "C" fn wgpuInstanceRequestAdapter(
             callback(
                 native::WGPURequestAdapterStatus_Success,
                 Arc::into_raw(Arc::new(WGPUAdapterImpl {
+                    adopted: false,
                     context: context.clone(),
                     id: adapter_id,
                 })),
@@ -2963,6 +2982,7 @@ pub unsafe extern "C" fn wgpuInstanceEnumerateAdapters(
             // don't need.
 
             temp[i] = Arc::into_raw(Arc::new(WGPUAdapterImpl {
+                adopted: false,
                 context: context.clone(),
                 id: *id,
             }));
@@ -4203,6 +4223,7 @@ pub unsafe extern "C" fn wgpuSurfaceGetCurrentTexture(
             };
             surface_texture.texture = match texture {
                 Some(texture_id) => Arc::into_raw(Arc::new(WGPUTextureImpl {
+                    adopted: false,
                     context: context.clone(),
                     id: texture_id,
                     error_sink: surface_data.error_sink.clone(),
@@ -4340,6 +4361,11 @@ pub unsafe extern "C" fn wgpuTextureCreateView(
 pub unsafe extern "C" fn wgpuTextureDestroy(texture: native::WGPUTexture) {
     let (texture_id, context) = {
         let texture = texture.as_ref().expect("invalid texture");
+        if texture.adopted {
+            // The host owns an adopted texture (adopt_core.rs): destroying it here would destroy the host's.
+            log::warn!("wgpuTextureDestroy ignored: the texture is adopted from a host that owns it");
+            return;
+        }
         (texture.id, &texture.context)
     };
 
