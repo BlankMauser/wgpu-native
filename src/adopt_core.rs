@@ -318,9 +318,7 @@ mod tests {
     }
 
     /// A command buffer that is never submitted (its encoding failed) leaves the
-    /// registry when released, as a submitted one does (lib.rs
-    /// `WGPUCommandBufferImpl`). The adoption calls are only the harness: a
-    /// device handle on a Global the test can report on.
+    /// registry when released, as a submitted one does (lib.rs `WGPUCommandBufferImpl`).
     #[test]
     fn unsubmitted_command_buffer_is_dropped() {
         let Some(Setup { global, adapter_id, device_id, queue_id, .. }) = setup("unsubmitted_command_buffer_is_dropped") else {
@@ -418,8 +416,7 @@ mod tests {
             assert!(last().contains("not usable"), "{}", last());
             global.texture_drop(gone);
             assert!(wgpuDeviceAdoptTextureExt(device, id_to_u64(gone), Some(&native_desc)).is_null());
-            // A device that is not on the adapter given: another Vulkan adapter (an iGPU, or the CPU's
-            // lavapipe) when there is one, else any other adapter.
+            // A device of another adapter (same backend when there is one: iGPU or lavapipe).
             let backend = global.adapter_get_info(adapter_id).backend;
             let others: Vec<_> = adapters.iter().copied().filter(|&a| a != adapter_id).collect();
             match others.iter().copied().find(|&a| global.adapter_get_info(a).backend == backend).or(others.first().copied()) {
