@@ -11,9 +11,11 @@
 //! `Adapter::as_core_id`, `Device::as_core_id`, `Queue::as_core_id` and
 //! `Texture::as_core_id`, and turns them into `u64` with [`id_to_u64`].
 //!
-//! Ownership: the host keeps every id. Adopted handles never drop, poll or
-//! destroy what they wrap (`adopted: true`); releasing them only drops this
-//! side's `Arc<Global>` and `Arc`s. Everything created through the adopted
+//! Ownership: the host keeps every id. Adopted handles never drop or destroy
+//! what they wrap (`adopted: true`; `wgpuDeviceDestroy` and `wgpuTextureDestroy`
+//! on them are no-ops with a warning); releasing them only drops this side's
+//! `Arc<Global>` and `Arc`s. Adoption itself makes one non-blocking poll and one
+//! empty queue submission as liveness checks, nothing else. Everything created through the adopted
 //! device afterwards (buffers, pipelines, views, textures) is this side's and
 //! is dropped normally. The host must keep its own objects alive until every
 //! handle adopted here is released (`wgpuInstanceLiveObjectsExt`-style checks
@@ -22,16 +24,29 @@
 //! Misuse returns NULL with a per-thread message for
 //! [`wgpuCoreAdoptLastErrorExt`]; nothing unwinds into C. Refused: a null or
 //! zero argument, an id that is not live in the `Global`, a device that is lost
-//! or not from the adapter given, a texture that is destroyed. What cannot be
-//! checked, and is the caller's: that `global` really is a pointer from
-//! `Arc::as_ptr` of a live `Arc<wgpu_core::global::Global>`, and that a
-//! texture belongs to the device (wgpu-core rejects another device's texture
-//! with a validation error when it is used).
+//! or not from the adapter given, a queue that is not the device's (an empty
+//! submission is made and wgpu-core's device check refuses it), a texture that
+//! is destroyed. What cannot be checked, and is the caller's:
+//! - that `global` really is a pointer from `Arc::as_ptr` of a live
+//!   `Arc<wgpu_core::global::Global>`;
+//! - that every id comes from THAT `Global`: an id means something only in the
+//!   `Global` that made it (indices and epochs start at the same values in every
+//!   `Global`, so an id from another one can name a different live object and is
+//!   accepted);
+//! - that a texture belongs to the device (wgpu-core rejects another device's
+//!   texture with a validation error when it is used).
+//!
+//! The refusals rely on wgpu-core panicking for an id that is not live and on
+//! `catch_unwind` turning that into the error: building with `panic = "abort"`
+//! is refused at compile time.
+
+#[cfg(panic = "abort")]
+compile_error!("feature adopt-core needs panic = \"unwind\": its refusals catch wgpu-core's panic for an id that is not live");
 
 use crate::native;
 use crate::{
-    Context, ErrorSinkRaw, QueueId, TextureData, WGPUAdapterImpl, WGPUDeviceImpl,
-    WGPUInstanceImpl, WGPUTextureImpl, DEFAULT_DEVICE_LOST_HANDLER,
+    Context, DeviceLostCallback, ErrorSinkRaw, QueueId, TextureData, WGPUAdapterImpl,
+    WGPUDeviceImpl, WGPUInstanceImpl, WGPUTextureImpl, DEFAULT_DEVICE_LOST_HANDLER,
 };
 use parking_lot::Mutex;
 use std::cell::RefCell;
@@ -139,13 +154,18 @@ pub unsafe extern "C" fn wgpuInstanceAdoptAdapterExt(
 }
 
 /// The host's device and queue (`Device::as_core_id`, `Queue::as_core_id`).
-/// The device must be live (not lost) and open on `adapter`. Features and limits
-/// are the host's own: read them with `wgpuDeviceHasFeature` / `wgpuDeviceGetLimits`.
+/// The device must be live (not lost), open on `adapter`, and the queue its own.
+/// Features and limits are the host's: read them with `wgpuDeviceHasFeature` /
+/// `wgpuDeviceGetLimits`. From `descriptor` (may be NULL) only the callbacks are
+/// used: `uncapturedErrorCallbackInfo` and `deviceLostCallbackInfo`. With none the
+/// defaults apply, and the defaults treat a device loss or an uncaptured error as
+/// fatal (a panic, process abort): pass callbacks that do not.
 #[no_mangle]
 pub unsafe extern "C" fn wgpuAdapterAdoptDeviceExt(
     adapter: native::WGPUAdapter,
     device_id: u64,
     queue_id: u64,
+    descriptor: Option<&native::WGPUDeviceDescriptor>,
 ) -> native::WGPUDevice {
     guarded("wgpuAdapterAdoptDeviceExt", std::ptr::null(), || {
         let adapter = adapter.as_ref().ok_or("null adapter")?;
@@ -164,24 +184,53 @@ pub unsafe extern "C" fn wgpuAdapterAdoptDeviceExt(
         context
             .device_poll(device, wgt::PollType::Poll)
             .map_err(|e| format!("the device is not usable: {e}"))?;
-        // Panics (caught) when the queue id is not live. wgpu-core 30 cannot say
-        // which device a queue belongs to: pass the queue of the same wgpu::Device.
-        let _ = context.queue_get_timestamp_period(queue);
-        Ok(Arc::into_raw(Arc::new_cyclic(|weak| WGPUDeviceImpl {
-            context: context.clone(),
-            id: device,
-            queue: Arc::new(QueueId {
+        check_queue_of_device(context, device, queue)?;
+        let (device_lost_handler, error_callback) = match descriptor {
+            Some(d) => {
+                let (_, error_callback) = crate::conv::map_device_descriptor(d, wgt::Limits::default(), None);
+                let handler = DeviceLostCallback {
+                    callback: d.deviceLostCallbackInfo.callback,
+                    userdata: crate::new_userdata!(d.deviceLostCallbackInfo),
+                };
+                (handler, error_callback)
+            }
+            None => (DEFAULT_DEVICE_LOST_HANDLER, None),
+        };
+        Ok(Arc::into_raw(Arc::new_cyclic(|weak| {
+            let mut sink = ErrorSinkRaw::new(device_lost_handler, weak.clone());
+            if let Some(handler) = error_callback {
+                sink.uncaptured_handler = handler;
+            }
+            WGPUDeviceImpl {
                 context: context.clone(),
-                id: queue,
+                id: device,
+                queue: Arc::new(QueueId {
+                    context: context.clone(),
+                    id: queue,
+                    adopted: true,
+                }),
+                error_sink: Arc::new(Mutex::new(sink)),
                 adopted: true,
-            }),
-            error_sink: Arc::new(Mutex::new(ErrorSinkRaw::new(
-                DEFAULT_DEVICE_LOST_HANDLER,
-                weak.clone(),
-            ))),
-            adopted: true,
+            }
         })))
     })
+}
+
+/// A queue is its device's only if a command buffer of the device submits on it
+/// (wgpu-core's `queue_submit` checks the device): submit an empty one.
+fn check_queue_of_device(context: &Context, device: id::DeviceId, queue: id::QueueId) -> Result<(), String> {
+    let (encoder, error) = context.device_create_command_encoder(device, &wgt::CommandEncoderDescriptor::default(), None);
+    if let Some(error) = error {
+        return Err(format!("cannot create an encoder to check the queue: {error}"));
+    }
+    let (buffer, error) = context.command_encoder_finish(encoder, &wgt::CommandBufferDescriptor::default(), None);
+    if let Some((_, error)) = error {
+        return Err(format!("cannot finish an encoder to check the queue: {error}"));
+    }
+    context
+        .queue_submit(queue, &[buffer])
+        .map(|_| ())
+        .map_err(|(_, error)| format!("the queue is not this device's: {error}"))
 }
 
 /// The host's texture (`Texture::as_core_id`) as a handle of `device`.
@@ -277,7 +326,7 @@ mod tests {
             assert!(!instance.is_null(), "{}", last());
             let adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(adapter_id));
             assert!(!adapter.is_null(), "{}", last());
-            let device = wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue_id));
+            let device = wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue_id), None);
             assert!(!device.is_null(), "{}", last());
             let texture = wgpuDeviceAdoptTextureExt(device, id_to_u64(texture_id), Some(&native_desc));
             assert!(!texture.is_null(), "{}", last());
@@ -287,9 +336,9 @@ mod tests {
             assert!(wgpuInstanceAdoptAdapterExt(instance, 0).is_null());
             assert!(last().contains("zero"));
             let dead = 0xdead_0000_0007_u64;
-            assert!(wgpuAdapterAdoptDeviceExt(adapter, dead, id_to_u64(queue_id)).is_null(), "dead device");
+            assert!(wgpuAdapterAdoptDeviceExt(adapter, dead, id_to_u64(queue_id), None).is_null(), "dead device");
             assert!(!last().is_empty());
-            assert!(wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), dead).is_null(), "dead queue");
+            assert!(wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), dead, None).is_null(), "dead queue");
             assert!(!last().is_empty());
             assert!(wgpuDeviceAdoptTextureExt(device, dead, Some(&native_desc)).is_null(), "dead texture");
             assert!(!last().is_empty());
@@ -304,10 +353,46 @@ mod tests {
             if let Some(&other) = adapters.get(1) {
                 let other_adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(other));
                 assert!(!other_adapter.is_null(), "{}", last());
-                assert!(wgpuAdapterAdoptDeviceExt(other_adapter, id_to_u64(device_id), id_to_u64(queue_id)).is_null());
+                assert!(wgpuAdapterAdoptDeviceExt(other_adapter, id_to_u64(device_id), id_to_u64(queue_id), None).is_null());
                 assert!(last().contains("not"), "{}", last());
                 crate::wgpuAdapterRelease(other_adapter);
             }
+            // A queue that is another device's is refused (an empty submission checks it).
+            let (device2, queue2) = global
+                .adapter_request_device(adapter_id, &wgt::DeviceDescriptor::default(), None, None)
+                .expect("second device");
+            assert!(wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue2), None).is_null());
+            assert!(last().contains("not this device"), "{}", last());
+            // An adopted device keeps the caller's uncaptured-error callback (the default one aborts).
+            static UNCAPTURED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            unsafe extern "C" fn on_error(
+                _device: *const native::WGPUDevice,
+                _kind: native::WGPUErrorType,
+                _message: native::WGPUStringView,
+                _u1: *mut std::ffi::c_void,
+                _u2: *mut std::ffi::c_void,
+            ) {
+                UNCAPTURED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            let mut dd: native::WGPUDeviceDescriptor = std::mem::zeroed();
+            dd.uncapturedErrorCallbackInfo.callback = Some(on_error);
+            let with_callback = wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue_id), Some(&dd));
+            assert!(!with_callback.is_null(), "{}", last());
+            let mut bd: native::WGPUBufferDescriptor = std::mem::zeroed();
+            bd.usage = native::WGPUBufferUsage_Vertex as _;
+            bd.size = u64::MAX / 2;
+            let buffer = crate::wgpuDeviceCreateBuffer(with_callback, Some(&bd));
+            assert!(!buffer.is_null());
+            assert_eq!(UNCAPTURED.load(std::sync::atomic::Ordering::SeqCst), 1, "the callback must see the error");
+            crate::wgpuBufferRelease(buffer);
+            // Destroy on adopted handles is a no-op: the host's texture and device stay usable.
+            crate::wgpuTextureDestroy(texture);
+            crate::wgpuDeviceDestroy(with_callback);
+            let (view, error) = global.texture_create_view(texture_id, &Default::default(), None);
+            assert!(error.is_none(), "the host's texture must survive wgpuTextureDestroy");
+            global.texture_view_drop(view);
+            assert!(global.device_poll(device_id, wgt::PollType::Poll).is_ok());
+            crate::wgpuDeviceRelease(with_callback);
             // Releasing adopted handles leaves the host's objects alone.
             crate::wgpuTextureRelease(texture);
             crate::wgpuDeviceRelease(device);

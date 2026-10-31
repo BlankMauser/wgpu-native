@@ -2596,6 +2596,11 @@ pub unsafe extern "C" fn wgpuDeviceCreateTexture(
 pub unsafe extern "C" fn wgpuDeviceDestroy(device: native::WGPUDevice) {
     let (device_id, context) = {
         let device = device.as_ref().expect("invalid device");
+        if device.adopted {
+            // The host owns an adopted device (adopt_core.rs): destroying it here would destroy the host's.
+            log::warn!("wgpuDeviceDestroy ignored: the device is adopted from a host that owns it");
+            return;
+        }
         (device.id, &device.context)
     };
 
@@ -4356,6 +4361,11 @@ pub unsafe extern "C" fn wgpuTextureCreateView(
 pub unsafe extern "C" fn wgpuTextureDestroy(texture: native::WGPUTexture) {
     let (texture_id, context) = {
         let texture = texture.as_ref().expect("invalid texture");
+        if texture.adopted {
+            // The host owns an adopted texture (adopt_core.rs): destroying it here would destroy the host's.
+            log::warn!("wgpuTextureDestroy ignored: the texture is adopted from a host that owns it");
+            return;
+        }
         (texture.id, &texture.context)
     };
 
