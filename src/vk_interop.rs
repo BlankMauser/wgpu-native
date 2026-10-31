@@ -235,6 +235,7 @@ pub unsafe extern "C" fn wgpuInstanceCreateAdapterFromVulkanExt(
             .ok_or("the physical device is not usable by wgpu")?;
         let id = context.create_adapter_from_hal(exposed.into(), None);
         Ok(Arc::into_raw(Arc::new(WGPUAdapterImpl {
+            adopted: false,
             context: context.clone(),
             id,
         })))
@@ -304,9 +305,11 @@ pub unsafe extern "C" fn wgpuAdapterCreateDeviceFromVulkanExt(
             .create_device_from_hal(adapter.id, open.into(), &desc, None, None)
             .map_err(|e| e.to_string())?;
         Ok(Arc::into_raw(Arc::new_cyclic(|device| WGPUDeviceImpl {
+            adopted: false,
             context: context.clone(),
             id: device_id,
             queue: Arc::new(QueueId {
+                adopted: false,
                 context: context.clone(),
                 id: queue_id,
             }),
@@ -421,6 +424,7 @@ pub unsafe extern "C" fn wgpuDeviceImportVulkanImageExt(
             return Err(message);
         }
         Ok(Arc::into_raw(Arc::new(WGPUTextureImpl {
+            adopted: false,
             context: context.clone(),
             id: texture_id,
             error_sink: error_sink.clone(),

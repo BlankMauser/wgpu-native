@@ -39,7 +39,7 @@ package = "naga"
 version = "30.0.1"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
 default = ["wgsl", "spirv", "glsl", "dx12", "metal", "vulkan", "gles"]
@@ -94,6 +94,12 @@ serde = ["dep:serde", "wgc/serde"]
 # Uncomment once upstream adds it again — https://github.com/gfx-rs/wgpu/issues/5974
 # ## Allow writing of trace capture files. See [`Adapter::request_device`].
 # trace = ["serde", "wgc/trace"]
+
+## Entry points that adopt a device, queue and textures a host owns in the SAME
+## wgpu-core `Global` (`src/adopt_core.rs`, `ffi/wgpu_adopt_core.h`). Build wgpu-native
+## as an rlib in the host's Cargo graph with the host's `[patch.crates-io]` for
+## wgpu-core/wgpu-hal, so there is one wgpu-core in the process. Needs no backend.
+adopt-core = []
 
 ## Allow deserializing of trace capture files that were written with the `trace` feature.
 ## To replay a trace file use the [wgpu player](https://github.com/gfx-rs/wgpu/tree/trunk/player).
