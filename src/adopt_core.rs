@@ -228,3 +228,92 @@ pub unsafe extern "C" fn wgpuDeviceAdoptTextureExt(
         })))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    unsafe fn last() -> String {
+        let mut b = vec![0u8; 512];
+        let n = wgpuCoreAdoptLastErrorExt(b.as_mut_ptr().cast(), b.len());
+        String::from_utf8_lossy(&b[..n.min(512)]).into()
+    }
+
+    /// Misuse of the adoption calls returns NULL with a message and never
+    /// unwinds into C. Needs an adapter: skipped without one.
+    #[test]
+    fn misuse_is_refused() {
+        let global = Arc::new(Context::new("adopt-core test", wgt::InstanceDescriptor::new_without_display_handle(), None));
+        let adapters = global.enumerate_adapters(wgt::Backends::all(), false);
+        let Some(&adapter_id) = adapters.first() else {
+            eprintln!("no adapter: skipped");
+            return;
+        };
+        let (device_id, queue_id) = global
+            .adapter_request_device(adapter_id, &wgt::DeviceDescriptor::default(), None, None)
+            .expect("request_device");
+        let texture_desc = wgt::TextureDescriptor {
+            label: None,
+            size: wgt::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgt::TextureDimension::D2,
+            format: wgt::TextureFormat::Rgba8Unorm,
+            usage: wgt::TextureUsages::RENDER_ATTACHMENT | wgt::TextureUsages::COPY_SRC,
+            view_formats: vec![],
+        };
+        let (texture_id, error) = global.device_create_texture(device_id, &texture_desc, None);
+        assert!(error.is_none());
+        let mut native_desc: native::WGPUTextureDescriptor = unsafe { std::mem::zeroed() };
+        native_desc.usage = (native::WGPUTextureUsage_RenderAttachment | native::WGPUTextureUsage_CopySrc) as _;
+        native_desc.dimension = native::WGPUTextureDimension_2D;
+        native_desc.size = native::WGPUExtent3D { width: 4, height: 4, depthOrArrayLayers: 1 };
+        native_desc.format = native::WGPUTextureFormat_RGBA8Unorm;
+        native_desc.mipLevelCount = 1;
+        native_desc.sampleCount = 1;
+        unsafe {
+            // The good path.
+            let instance = wgpuCreateInstanceFromCoreExt(Arc::as_ptr(&global).cast());
+            assert!(!instance.is_null(), "{}", last());
+            let adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(adapter_id));
+            assert!(!adapter.is_null(), "{}", last());
+            let device = wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue_id));
+            assert!(!device.is_null(), "{}", last());
+            let texture = wgpuDeviceAdoptTextureExt(device, id_to_u64(texture_id), Some(&native_desc));
+            assert!(!texture.is_null(), "{}", last());
+            // Refused: each returns NULL with a message.
+            assert!(wgpuCreateInstanceFromCoreExt(std::ptr::null()).is_null());
+            assert!(last().contains("null Global"));
+            assert!(wgpuInstanceAdoptAdapterExt(instance, 0).is_null());
+            assert!(last().contains("zero"));
+            let dead = 0xdead_0000_0007_u64;
+            assert!(wgpuAdapterAdoptDeviceExt(adapter, dead, id_to_u64(queue_id)).is_null(), "dead device");
+            assert!(!last().is_empty());
+            assert!(wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), dead).is_null(), "dead queue");
+            assert!(!last().is_empty());
+            assert!(wgpuDeviceAdoptTextureExt(device, dead, Some(&native_desc)).is_null(), "dead texture");
+            assert!(!last().is_empty());
+            // A destroyed texture, then a dropped one.
+            let (gone, _) = global.device_create_texture(device_id, &texture_desc, None);
+            global.texture_destroy(gone);
+            assert!(wgpuDeviceAdoptTextureExt(device, id_to_u64(gone), Some(&native_desc)).is_null());
+            assert!(last().contains("not usable"), "{}", last());
+            global.texture_drop(gone);
+            assert!(wgpuDeviceAdoptTextureExt(device, id_to_u64(gone), Some(&native_desc)).is_null());
+            // A device that is not on the adapter given.
+            if let Some(&other) = adapters.get(1) {
+                let other_adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(other));
+                assert!(!other_adapter.is_null(), "{}", last());
+                assert!(wgpuAdapterAdoptDeviceExt(other_adapter, id_to_u64(device_id), id_to_u64(queue_id)).is_null());
+                assert!(last().contains("not"), "{}", last());
+                crate::wgpuAdapterRelease(other_adapter);
+            }
+            // Releasing adopted handles leaves the host's objects alone.
+            crate::wgpuTextureRelease(texture);
+            crate::wgpuDeviceRelease(device);
+            crate::wgpuAdapterRelease(adapter);
+            crate::wgpuInstanceRelease(instance);
+        }
+        assert!(global.device_poll(device_id, wgt::PollType::Poll).is_ok(), "the host's device must survive");
+    }
+}
