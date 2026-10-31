@@ -1,0 +1,14 @@
+src/adopt_core.rs
+  h_03360edcd9e88f 220-221,225,229,231,234-236,365-376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "040a86ee1d72eb78bc28a081e837de2d23c9a230",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}
