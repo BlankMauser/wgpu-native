@@ -1,0 +1,16 @@
+ffi/wgpu_vk_interop.h
+  h_03360edcd9e88f 42-46,50-58
+src/vk_interop.rs
+  h_03360edcd9e88f 1,9-10,15-23,26-29,33,41-42,44,66-113,115,117-142,145-152,157-158,160-168,176,178-181,183-213,221,223-241,250,253-257,259-287,289-301,303-306,308-318,346-347,355-435,437-438,443,449-477
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61d0c9e68140198ada903482b688d34bf87566ff",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+examples/vk_interop_share/Cargo.lock
+  h_03360edcd9e88f 1-1227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c236d53bf5a95442bf0891a14403ba1b31fc56d5",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}

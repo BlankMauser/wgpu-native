@@ -1,0 +1,23 @@
+crates/wgpu-vk-handoff/Cargo.lock
+  s_ce504a2d565581::t_d98e86f24991e4 1-951
+crates/wgpu-vk-handoff/Cargo.toml
+  s_ce504a2d565581::t_ed83712e269876 1-13
+ffi/wgpu_vk_interop.h
+  s_ce504a2d565581::t_a9cdf96c782bde 29-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc39653bdd514eab4f09786ab6f269667b436b39",
+  "prompts": {},
+  "sessions": {
+    "s_ce504a2d565581": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17a15-84b2-7920-9e8f-08447b61b78a",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}

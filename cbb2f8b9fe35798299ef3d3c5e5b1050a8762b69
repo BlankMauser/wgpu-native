@@ -1,0 +1,18 @@
+ffi/wgpu.h
+  h_03360edcd9e88f 1462-1475,1510-1515
+src/conv.rs
+  h_03360edcd9e88f 843-848
+src/lib.rs
+  h_03360edcd9e88f 4878-4884
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbb2f8b9fe35798299ef3d3c5e5b1050a8762b69",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}

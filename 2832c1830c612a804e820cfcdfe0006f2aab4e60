@@ -1,0 +1,14 @@
+crates/wgpu-vk-handoff/.gitignore
+  h_03360edcd9e88f 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2832c1830c612a804e820cfcdfe0006f2aab4e60",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}
