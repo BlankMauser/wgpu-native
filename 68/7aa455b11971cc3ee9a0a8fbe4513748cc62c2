@@ -1,0 +1,18 @@
+ffi/wgpu_adopt_core.h
+  h_03360edcd9e88f 9-13,27-29
+src/adopt_core.rs
+  h_03360edcd9e88f 14-18,27-44,48-49,157-162,168,187-204,206-212,214,219-235,329,339,341,356,360-395
+src/lib.rs
+  h_03360edcd9e88f 2599-2603,4364-4368
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "687aa455b11971cc3ee9a0a8fbe4513748cc62c2",
+  "prompts": {},
+  "humans": {
+    "h_03360edcd9e88f": {
+      "author": "BlankMauser <thomasluvan@gmail.com>"
+    }
+  }
+}
