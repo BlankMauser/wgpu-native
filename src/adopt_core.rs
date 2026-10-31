@@ -293,20 +293,39 @@ mod tests {
         String::from_utf8_lossy(&b[..n.min(512)]).into()
     }
 
-    /// A command buffer that is never submitted (its encoding failed) leaves the
-    /// registry when released, as a submitted one does (lib.rs
-    /// `WGPUCommandBufferImpl`). The adoption calls are only the harness: a
-    /// device handle on a Global the test can report on. Skipped without an adapter.
-    #[test]
-    fn unsubmitted_command_buffer_is_dropped() {
+    struct Setup {
+        global: Arc<Context>,
+        adapters: Vec<id::AdapterId>,
+        adapter_id: id::AdapterId,
+        device_id: id::DeviceId,
+        queue_id: id::QueueId,
+    }
+
+    /// A Global with every adapter (CPU ones included) and a device on the first. Without an
+    /// adapter: None, and a skip line written straight to stderr (libtest captures `eprintln!`).
+    fn setup(test: &str) -> Option<Setup> {
+        use std::io::Write;
         let global = Arc::new(Context::new("adopt-core test", wgt::InstanceDescriptor::new_without_display_handle(), None));
-        let Some(&adapter_id) = global.enumerate_adapters(wgt::Backends::all(), false).first() else {
-            eprintln!("no adapter: skipped");
-            return;
+        let adapters = global.enumerate_adapters(wgt::Backends::all(), false);
+        let Some(&adapter_id) = adapters.first() else {
+            let _ = writeln!(std::io::stderr(), "{test}: SKIPPED (no adapter)");
+            return None;
         };
         let (device_id, queue_id) = global
             .adapter_request_device(adapter_id, &wgt::DeviceDescriptor::default(), None, None)
             .expect("request_device");
+        Some(Setup { global, adapters, adapter_id, device_id, queue_id })
+    }
+
+    /// A command buffer that is never submitted (its encoding failed) leaves the
+    /// registry when released, as a submitted one does (lib.rs
+    /// `WGPUCommandBufferImpl`). The adoption calls are only the harness: a
+    /// device handle on a Global the test can report on.
+    #[test]
+    fn unsubmitted_command_buffer_is_dropped() {
+        let Some(Setup { global, adapter_id, device_id, queue_id, .. }) = setup("unsubmitted_command_buffer_is_dropped") else {
+            return;
+        };
         let kept = |g: &Context| g.generate_report().hub.command_buffers.num_kept_from_user;
         unsafe extern "C" fn ignore_error(
             _device: *const native::WGPUDevice,
@@ -348,19 +367,9 @@ mod tests {
     /// unwinds into C. Needs an adapter: skipped without one.
     #[test]
     fn misuse_is_refused() {
-        let global = Arc::new(Context::new("adopt-core test", wgt::InstanceDescriptor::new_without_display_handle(), None));
-        let adapters = global.enumerate_adapters(wgt::Backends::all(), false);
-        for &a in &adapters {
-            let info = global.adapter_get_info(a);
-            eprintln!("adapter: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
-        }
-        let Some(&adapter_id) = adapters.first() else {
-            eprintln!("no adapter: skipped");
+        let Some(Setup { global, adapters, adapter_id, device_id, queue_id }) = setup("misuse_is_refused") else {
             return;
         };
-        let (device_id, queue_id) = global
-            .adapter_request_device(adapter_id, &wgt::DeviceDescriptor::default(), None, None)
-            .expect("request_device");
         let texture_desc = wgt::TextureDescriptor {
             label: None,
             size: wgt::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
