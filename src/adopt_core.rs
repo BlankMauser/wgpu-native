@@ -293,6 +293,57 @@ mod tests {
         String::from_utf8_lossy(&b[..n.min(512)]).into()
     }
 
+    /// A command buffer that is never submitted (its encoding failed) leaves the
+    /// registry when released, as a submitted one does (lib.rs
+    /// `WGPUCommandBufferImpl`). The adoption calls are only the harness: a
+    /// device handle on a Global the test can report on. Skipped without an adapter.
+    #[test]
+    fn unsubmitted_command_buffer_is_dropped() {
+        let global = Arc::new(Context::new("adopt-core test", wgt::InstanceDescriptor::new_without_display_handle(), None));
+        let Some(&adapter_id) = global.enumerate_adapters(wgt::Backends::all(), false).first() else {
+            eprintln!("no adapter: skipped");
+            return;
+        };
+        let (device_id, queue_id) = global
+            .adapter_request_device(adapter_id, &wgt::DeviceDescriptor::default(), None, None)
+            .expect("request_device");
+        let kept = |g: &Context| g.generate_report().hub.command_buffers.num_kept_from_user;
+        unsafe extern "C" fn ignore_error(
+            _device: *const native::WGPUDevice,
+            _kind: native::WGPUErrorType,
+            _message: native::WGPUStringView,
+            _u1: *mut std::ffi::c_void,
+            _u2: *mut std::ffi::c_void,
+        ) {
+        }
+        unsafe {
+            let instance = wgpuCreateInstanceFromCoreExt(Arc::as_ptr(&global).cast());
+            let adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(adapter_id));
+            let mut dd: native::WGPUDeviceDescriptor = std::mem::zeroed();
+            dd.uncapturedErrorCallbackInfo.callback = Some(ignore_error);
+            let device = wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue_id), Some(&dd));
+            assert!(!device.is_null(), "{}", last());
+            let mut bd: native::WGPUBufferDescriptor = std::mem::zeroed();
+            bd.usage = (native::WGPUBufferUsage_CopySrc | native::WGPUBufferUsage_CopyDst) as _;
+            bd.size = 64;
+            let buffer = crate::wgpuDeviceCreateBuffer(device, Some(&bd));
+            let before = kept(&global);
+            for _ in 0..3 {
+                let encoder = crate::wgpuDeviceCreateCommandEncoder(device, None);
+                // 128 bytes out of a 64-byte buffer: the encoding fails at finish.
+                crate::wgpuCommandEncoderCopyBufferToBuffer(encoder, buffer, 0, buffer, 0, 128);
+                let command_buffer = crate::wgpuCommandEncoderFinish(encoder, None);
+                crate::wgpuCommandBufferRelease(command_buffer);
+                crate::wgpuCommandEncoderRelease(encoder);
+            }
+            assert_eq!(kept(&global), before, "3 failed, released command buffers must leave the registry");
+            crate::wgpuBufferRelease(buffer);
+            crate::wgpuDeviceRelease(device);
+            crate::wgpuAdapterRelease(adapter);
+            crate::wgpuInstanceRelease(instance);
+        }
+    }
+
     /// Misuse of the adoption calls returns NULL with a message and never
     /// unwinds into C. Needs an adapter: skipped without one.
     #[test]
