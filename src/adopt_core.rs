@@ -293,19 +293,81 @@ mod tests {
         String::from_utf8_lossy(&b[..n.min(512)]).into()
     }
 
-    /// Misuse of the adoption calls returns NULL with a message and never
-    /// unwinds into C. Needs an adapter: skipped without one.
-    #[test]
-    fn misuse_is_refused() {
+    struct Setup {
+        global: Arc<Context>,
+        adapters: Vec<id::AdapterId>,
+        adapter_id: id::AdapterId,
+        device_id: id::DeviceId,
+        queue_id: id::QueueId,
+    }
+
+    /// A Global with every adapter (CPU ones included) and a device on the first. Without an
+    /// adapter: None, and a skip line written straight to stderr (libtest captures `eprintln!`).
+    fn setup(test: &str) -> Option<Setup> {
+        use std::io::Write;
         let global = Arc::new(Context::new("adopt-core test", wgt::InstanceDescriptor::new_without_display_handle(), None));
         let adapters = global.enumerate_adapters(wgt::Backends::all(), false);
         let Some(&adapter_id) = adapters.first() else {
-            eprintln!("no adapter: skipped");
-            return;
+            let _ = writeln!(std::io::stderr(), "{test}: SKIPPED (no adapter)");
+            return None;
         };
         let (device_id, queue_id) = global
             .adapter_request_device(adapter_id, &wgt::DeviceDescriptor::default(), None, None)
             .expect("request_device");
+        Some(Setup { global, adapters, adapter_id, device_id, queue_id })
+    }
+
+    /// A command buffer that is never submitted (its encoding failed) leaves the
+    /// registry when released, as a submitted one does (lib.rs `WGPUCommandBufferImpl`).
+    #[test]
+    fn unsubmitted_command_buffer_is_dropped() {
+        let Some(Setup { global, adapter_id, device_id, queue_id, .. }) = setup("unsubmitted_command_buffer_is_dropped") else {
+            return;
+        };
+        let kept = |g: &Context| g.generate_report().hub.command_buffers.num_kept_from_user;
+        unsafe extern "C" fn ignore_error(
+            _device: *const native::WGPUDevice,
+            _kind: native::WGPUErrorType,
+            _message: native::WGPUStringView,
+            _u1: *mut std::ffi::c_void,
+            _u2: *mut std::ffi::c_void,
+        ) {
+        }
+        unsafe {
+            let instance = wgpuCreateInstanceFromCoreExt(Arc::as_ptr(&global).cast());
+            let adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(adapter_id));
+            let mut dd: native::WGPUDeviceDescriptor = std::mem::zeroed();
+            dd.uncapturedErrorCallbackInfo.callback = Some(ignore_error);
+            let device = wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue_id), Some(&dd));
+            assert!(!device.is_null(), "{}", last());
+            let mut bd: native::WGPUBufferDescriptor = std::mem::zeroed();
+            bd.usage = (native::WGPUBufferUsage_CopySrc | native::WGPUBufferUsage_CopyDst) as _;
+            bd.size = 64;
+            let buffer = crate::wgpuDeviceCreateBuffer(device, Some(&bd));
+            let before = kept(&global);
+            for _ in 0..3 {
+                let encoder = crate::wgpuDeviceCreateCommandEncoder(device, None);
+                // 128 bytes out of a 64-byte buffer: the encoding fails at finish.
+                crate::wgpuCommandEncoderCopyBufferToBuffer(encoder, buffer, 0, buffer, 0, 128);
+                let command_buffer = crate::wgpuCommandEncoderFinish(encoder, None);
+                crate::wgpuCommandBufferRelease(command_buffer);
+                crate::wgpuCommandEncoderRelease(encoder);
+            }
+            assert_eq!(kept(&global), before, "3 failed, released command buffers must leave the registry");
+            crate::wgpuBufferRelease(buffer);
+            crate::wgpuDeviceRelease(device);
+            crate::wgpuAdapterRelease(adapter);
+            crate::wgpuInstanceRelease(instance);
+        }
+    }
+
+    /// Misuse of the adoption calls returns NULL with a message and never
+    /// unwinds into C. Needs an adapter: skipped without one.
+    #[test]
+    fn misuse_is_refused() {
+        let Some(Setup { global, adapters, adapter_id, device_id, queue_id }) = setup("misuse_is_refused") else {
+            return;
+        };
         let texture_desc = wgt::TextureDescriptor {
             label: None,
             size: wgt::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
@@ -354,13 +416,19 @@ mod tests {
             assert!(last().contains("not usable"), "{}", last());
             global.texture_drop(gone);
             assert!(wgpuDeviceAdoptTextureExt(device, id_to_u64(gone), Some(&native_desc)).is_null());
-            // A device that is not on the adapter given.
-            if let Some(&other) = adapters.get(1) {
-                let other_adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(other));
-                assert!(!other_adapter.is_null(), "{}", last());
-                assert!(wgpuAdapterAdoptDeviceExt(other_adapter, id_to_u64(device_id), id_to_u64(queue_id), None).is_null());
-                assert!(last().contains("not"), "{}", last());
-                crate::wgpuAdapterRelease(other_adapter);
+            // A device of another adapter (same backend when there is one: iGPU or lavapipe).
+            let backend = global.adapter_get_info(adapter_id).backend;
+            let others: Vec<_> = adapters.iter().copied().filter(|&a| a != adapter_id).collect();
+            match others.iter().copied().find(|&a| global.adapter_get_info(a).backend == backend).or(others.first().copied()) {
+                Some(other) => {
+                    let other_adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(other));
+                    assert!(!other_adapter.is_null(), "{}", last());
+                    assert!(wgpuAdapterAdoptDeviceExt(other_adapter, id_to_u64(device_id), id_to_u64(queue_id), None).is_null());
+                    assert!(last().contains("the device is on adapter"), "{}", last());
+                    eprintln!("device of another adapter ({}): refused: {}", global.adapter_get_info(other).name, last());
+                    crate::wgpuAdapterRelease(other_adapter);
+                }
+                None => eprintln!("device of another adapter: skipped (one adapter)"),
             }
             // Adopting and releasing leaves no encoder or command buffer behind (each held an Arc<Device>).
             let kept = |g: &Context| {

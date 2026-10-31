@@ -112,11 +112,13 @@ impl Drop for WGPUBufferImpl {
 pub struct WGPUCommandBufferImpl {
     context: Arc<Context>,
     id: id::CommandBufferId,
-    open: atomic::AtomicBool,
 }
 impl Drop for WGPUCommandBufferImpl {
+    // Always dropped, submitted or not, as wgpu's own `CoreCommandBuffer`: wgpu-core's
+    // `queue_submit` does not take the id out of the registry, and one that is never
+    // submitted (a failed `wgpuCommandEncoderFinish`) stayed there for the device's life.
     fn drop(&mut self) {
-        if self.open.load(atomic::Ordering::SeqCst) && !thread::panicking() {
+        if !thread::panicking() {
             let context = &self.context;
             context.command_buffer_drop(self.id);
         }
@@ -1515,7 +1517,6 @@ pub unsafe extern "C" fn wgpuCommandEncoderFinish(
     Arc::into_raw(Arc::new(WGPUCommandBufferImpl {
         context: context.clone(),
         id: command_buffer_id,
-        open: atomic::AtomicBool::new(false),
     }))
 }
 
@@ -3106,7 +3107,6 @@ pub unsafe extern "C" fn wgpuQueueSubmit(
         .iter()
         .map(|command_buffer| {
             let command_buffer = command_buffer.as_ref().expect("invalid command buffer");
-            command_buffer.open.store(true, atomic::Ordering::SeqCst);
             command_buffer.id
         })
         .collect::<SmallVec<[_; 4]>>();
@@ -4500,7 +4500,6 @@ pub unsafe extern "C" fn wgpuQueueSubmitForIndex(
         .iter()
         .map(|command_buffer| {
             let command_buffer = command_buffer.as_ref().expect("invalid command buffer");
-            command_buffer.open.store(true, atomic::Ordering::SeqCst);
             command_buffer.id
         })
         .collect::<SmallVec<[_; 4]>>();
