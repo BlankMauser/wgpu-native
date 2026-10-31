@@ -84,21 +84,21 @@ fn guarded<T>(what: &str, fallback: T, f: impl FnOnce() -> Result<T, String>) ->
     }
 }
 
-const _: () = assert!(size_of::<id::DeviceId>() == size_of::<u64>());
-
-/// A wgpu-core id as the `u64` the adoption calls take (the id is a
-/// `repr(transparent)` non-zero `u64`; wgpu-core has no public getter).
+/// A wgpu-core id as the `u64` the adoption calls take: its index in the low
+/// 32 bits, its epoch in the high 32 (`RawId::zip`).
 pub fn id_to_u64<T: wgc::id::Marker>(id: id::Id<T>) -> u64 {
-    // SAFETY: Id<T> is repr(transparent) over RawId over NonZeroU64.
-    unsafe { std::mem::transmute_copy::<id::Id<T>, u64>(&id) }
+    let (index, epoch) = id.into_raw().unzip();
+    u64::from(index) | (u64::from(epoch) << 32)
 }
 
 fn id_from_u64<T: wgc::id::Marker>(raw: u64, what: &str) -> Result<id::Id<T>, String> {
     if raw == 0 {
         return Err(format!("zero {what} id"));
     }
-    // SAFETY: non-zero; whether it names a live object is checked by the caller.
-    Ok(unsafe { id::Id::from_raw(std::mem::transmute_copy::<u64, wgc::id::RawId>(&raw)) })
+    // Non-zero, so `zip` does not panic. Whether it names a live object is checked by the caller.
+    let raw_id = wgc::id::RawId::zip(raw as u32, (raw >> 32) as u32);
+    // SAFETY: a RawId of the right kind is the caller's claim; liveness is checked by the caller.
+    Ok(unsafe { id::Id::from_raw(raw_id) })
 }
 
 /// Share the host's `Global`. `global` is `Arc::as_ptr` of a live
