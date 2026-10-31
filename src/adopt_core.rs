@@ -299,6 +299,10 @@ mod tests {
     fn misuse_is_refused() {
         let global = Arc::new(Context::new("adopt-core test", wgt::InstanceDescriptor::new_without_display_handle(), None));
         let adapters = global.enumerate_adapters(wgt::Backends::all(), false);
+        for &a in &adapters {
+            let info = global.adapter_get_info(a);
+            eprintln!("adapter: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
+        }
         let Some(&adapter_id) = adapters.first() else {
             eprintln!("no adapter: skipped");
             return;
@@ -354,13 +358,20 @@ mod tests {
             assert!(last().contains("not usable"), "{}", last());
             global.texture_drop(gone);
             assert!(wgpuDeviceAdoptTextureExt(device, id_to_u64(gone), Some(&native_desc)).is_null());
-            // A device that is not on the adapter given.
-            if let Some(&other) = adapters.get(1) {
-                let other_adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(other));
-                assert!(!other_adapter.is_null(), "{}", last());
-                assert!(wgpuAdapterAdoptDeviceExt(other_adapter, id_to_u64(device_id), id_to_u64(queue_id), None).is_null());
-                assert!(last().contains("not"), "{}", last());
-                crate::wgpuAdapterRelease(other_adapter);
+            // A device that is not on the adapter given: another Vulkan adapter (an iGPU, or the CPU's
+            // lavapipe) when there is one, else any other adapter.
+            let backend = global.adapter_get_info(adapter_id).backend;
+            let others: Vec<_> = adapters.iter().copied().filter(|&a| a != adapter_id).collect();
+            match others.iter().copied().find(|&a| global.adapter_get_info(a).backend == backend).or(others.first().copied()) {
+                Some(other) => {
+                    let other_adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(other));
+                    assert!(!other_adapter.is_null(), "{}", last());
+                    assert!(wgpuAdapterAdoptDeviceExt(other_adapter, id_to_u64(device_id), id_to_u64(queue_id), None).is_null());
+                    assert!(last().contains("the device is on adapter"), "{}", last());
+                    eprintln!("device of another adapter ({}): refused: {}", global.adapter_get_info(other).name, last());
+                    crate::wgpuAdapterRelease(other_adapter);
+                }
+                None => eprintln!("device of another adapter: skipped (one adapter)"),
             }
             // Adopting and releasing leaves no encoder or command buffer behind (each held an Arc<Device>).
             let kept = |g: &Context| {
