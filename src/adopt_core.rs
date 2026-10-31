@@ -217,18 +217,23 @@ pub unsafe extern "C" fn wgpuAdapterAdoptDeviceExt(
 }
 
 /// A queue is its device's only if a command buffer of the device submits on it
-/// (wgpu-core's `queue_submit` checks the device): submit an empty one.
+/// (wgpu-core's `queue_submit` checks the device): submit an empty one. The encoder
+/// and the buffer are dropped on every path (each holds an `Arc<Device>`).
 fn check_queue_of_device(context: &Context, device: id::DeviceId, queue: id::QueueId) -> Result<(), String> {
     let (encoder, error) = context.device_create_command_encoder(device, &wgt::CommandEncoderDescriptor::default(), None);
     if let Some(error) = error {
+        context.command_encoder_drop(encoder);
         return Err(format!("cannot create an encoder to check the queue: {error}"));
     }
     let (buffer, error) = context.command_encoder_finish(encoder, &wgt::CommandBufferDescriptor::default(), None);
+    context.command_encoder_drop(encoder);
     if let Some((_, error)) = error {
+        context.command_buffer_drop(buffer);
         return Err(format!("cannot finish an encoder to check the queue: {error}"));
     }
-    context
-        .queue_submit(queue, &[buffer])
+    let submitted = context.queue_submit(queue, &[buffer]);
+    context.command_buffer_drop(buffer);
+    submitted
         .map(|_| ())
         .map_err(|(_, error)| format!("the queue is not this device's: {error}"))
 }
@@ -357,6 +362,18 @@ mod tests {
                 assert!(last().contains("not"), "{}", last());
                 crate::wgpuAdapterRelease(other_adapter);
             }
+            // Adopting and releasing leaves no encoder or command buffer behind (each held an Arc<Device>).
+            let kept = |g: &Context| {
+                let r = g.generate_report().hub;
+                (r.command_encoders.num_kept_from_user, r.command_buffers.num_kept_from_user)
+            };
+            let before = kept(&global);
+            for _ in 0..5 {
+                let d = wgpuAdapterAdoptDeviceExt(adapter, id_to_u64(device_id), id_to_u64(queue_id), None);
+                assert!(!d.is_null(), "{}", last());
+                crate::wgpuDeviceRelease(d);
+            }
+            assert_eq!(kept(&global), before, "5 adopt/release cycles must leave the encoder and command-buffer counts unchanged");
             // A queue that is another device's is refused (an empty submission checks it).
             let (device2, queue2) = global
                 .adapter_request_device(adapter_id, &wgt::DeviceDescriptor::default(), None, None)
