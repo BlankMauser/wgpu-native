@@ -855,10 +855,16 @@ pub unsafe extern "C" fn wgpuAdapterRequestDevice(
 
     let (desc, device_lost_handler, error_callback) = match descriptor {
         Some(descriptor) => {
-            let (desc, error_callback) = follow_chain!(
+            let (mut desc, error_callback) = follow_chain!(
                 map_device_descriptor((descriptor, base_limits),
                 WGPUSType_DeviceExtras => native::WGPUDeviceExtras)
             );
+            // WGPULimits and WGPUNativeLimits have no fields for acceleration
+            // structures, and wgpu's defaults for them are zero: a device asked
+            // for ray queries gets the adapter's own (src/ray_query.rs).
+            if desc.required_features.intersects(wgt::Features::EXPERIMENTAL_RAY_QUERY) {
+                desc.required_limits = desc.required_limits.using_acceleration_structure_values(adapter_limits.clone());
+            }
             let device_lost_handler = DeviceLostCallback {
                 callback: descriptor.deviceLostCallbackInfo.callback,
                 userdata: new_userdata!(descriptor.deviceLostCallbackInfo),
