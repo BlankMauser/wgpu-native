@@ -475,13 +475,18 @@ pub(crate) unsafe fn map_device_descriptor<'a>(
     wgt::DeviceDescriptor<wgc::Label<'a>>,
     Option<UncapturedErrorCallback>,
 ) {
+    let required_features = map_features(make_slice(des.requiredFeatures, des.requiredFeatureCount));
+    // wgpu gates its experimental features (ray queries) behind an opt-in on the
+    // device; asking for one by name is that opt-in here (src/ray_query.rs).
+    let experimental_features = if required_features.intersects(wgt::Features::EXPERIMENTAL_RAY_QUERY) {
+        unsafe { wgt::ExperimentalFeatures::enabled() }
+    } else {
+        wgt::ExperimentalFeatures::disabled()
+    };
     (
         wgt::DeviceDescriptor {
             label: string_view_into_label(des.label),
-            required_features: map_features(make_slice(
-                des.requiredFeatures,
-                des.requiredFeatureCount,
-            )),
+            required_features,
             required_limits: match unsafe { des.requiredLimits.as_ref() } {
                 Some(required_limits) => unsafe {
                     follow_chain!(
@@ -494,7 +499,7 @@ pub(crate) unsafe fn map_device_descriptor<'a>(
             // TODO(wgpu.h)
             memory_hints: Default::default(),
             trace: Default::default(),
-            experimental_features: wgt::ExperimentalFeatures::disabled(),
+            experimental_features,
         },
         match des.uncapturedErrorCallbackInfo.callback {
             None => None,

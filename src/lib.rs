@@ -38,6 +38,8 @@ pub mod utils;
 pub mod vk_interop;
 #[cfg(feature = "adopt-core")]
 pub mod adopt_core;
+/// Acceleration structures for ray queries (BlankMauser fork; ffi/wgpu_ray_query.h).
+pub mod ray_query;
 
 pub mod native {
     #![allow(non_upper_case_globals)]
