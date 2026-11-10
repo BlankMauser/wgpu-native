@@ -29,6 +29,9 @@ WGPUAdapter wgpuInstanceAdoptAdapterExt(WGPUInstance instance, uint64_t adapterI
 WGPUDevice wgpuAdapterAdoptDeviceExt(WGPUAdapter adapter, uint64_t deviceId, uint64_t queueId, const WGPUDeviceDescriptor* descriptor);
 /** `descriptor` must be the texture's own; the handle's getters answer from it. */
 WGPUTexture wgpuDeviceAdoptTextureExt(WGPUDevice device, uint64_t textureId, const WGPUTextureDescriptor* descriptor);
+/** `descriptor` must be the buffer's own (size, usage); the handle's getters answer from it.
+ *  wgpuBufferDestroy and release on the handle leave the host's buffer alone. */
+WGPUBuffer wgpuDeviceAdoptBufferExt(WGPUDevice device, uint64_t bufferId, const WGPUBufferDescriptor* descriptor);
 /** Copies this thread's last adoption error (UTF-8, not NUL-terminated); returns its length. */
 size_t wgpuCoreAdoptLastErrorExt(char* out, size_t capacity);
 

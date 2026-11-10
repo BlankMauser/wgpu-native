@@ -45,8 +45,8 @@ compile_error!("feature adopt-core needs panic = \"unwind\": its refusals catch 
 
 use crate::native;
 use crate::{
-    Context, DeviceLostCallback, ErrorSinkRaw, QueueId, TextureData, WGPUAdapterImpl,
-    WGPUDeviceImpl, WGPUInstanceImpl, WGPUTextureImpl, DEFAULT_DEVICE_LOST_HANDLER,
+    BufferData, Context, DeviceLostCallback, ErrorSinkRaw, QueueId, TextureData, WGPUAdapterImpl,
+    WGPUBufferImpl, WGPUDeviceImpl, WGPUInstanceImpl, WGPUTextureImpl, DEFAULT_DEVICE_LOST_HANDLER,
 };
 use parking_lot::Mutex;
 use std::cell::RefCell;
@@ -283,6 +283,41 @@ pub unsafe extern "C" fn wgpuDeviceAdoptTextureExt(
     })
 }
 
+/// The host's buffer (`Buffer::as_core_id`) as a handle of `device`.
+/// `descriptor` must be the buffer's own (size and usage): wgpu-core cannot
+/// report them back, so the handle's getters answer from it. A buffer that is
+/// gone is refused; one the host destroyed is refused where wgpu-core says so
+/// here, and otherwise by the first bind group or copy that uses it.
+#[no_mangle]
+pub unsafe extern "C" fn wgpuDeviceAdoptBufferExt(
+    device: native::WGPUDevice,
+    buffer_id: u64,
+    descriptor: Option<&native::WGPUBufferDescriptor>,
+) -> native::WGPUBuffer {
+    guarded("wgpuDeviceAdoptBufferExt", std::ptr::null(), || {
+        let device = device.as_ref().ok_or("null device")?;
+        let descriptor = descriptor.ok_or("null descriptor")?;
+        let id = id_from_u64::<markers::Buffer>(buffer_id, "buffer")?;
+        let context = &device.context;
+        // Looking the id up proves it is live (a stale one panics, caught by
+        // `guarded`) and changes nothing: an unmapped buffer answers "not
+        // mapped", which is the expected answer.
+        if let Err(cause) = context.buffer_get_mapped_range(id, 0, Some(0)) {
+            let text = cause.to_string();
+            if text.contains("destroyed") || text.contains("invalid") {
+                return Err(format!("the buffer is not usable: {text}"));
+            }
+        }
+        Ok(Arc::into_raw(Arc::new(WGPUBufferImpl {
+            context: context.clone(),
+            id,
+            error_sink: device.error_sink.clone(),
+            data: BufferData { usage: descriptor.usage, size: descriptor.size },
+            adopted: true,
+        })))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +440,35 @@ mod tests {
             assert!(last().contains("not usable"), "{}", last());
             global.texture_drop(gone);
             assert!(wgpuDeviceAdoptTextureExt(device, id_to_u64(gone), Some(&native_desc)).is_null());
+            // A buffer of the host: the adopted handle answers from the descriptor, and neither
+            // destroying nor releasing it touches the host's buffer.
+            let (buffer_id, error) = global.device_create_buffer(
+                device_id,
+                &wgc::resource::BufferDescriptor {
+                    label: None,
+                    size: 64,
+                    usage: wgt::BufferUsages::COPY_DST | wgt::BufferUsages::STORAGE,
+                    mapped_at_creation: false,
+                },
+                None,
+            );
+            assert!(error.is_none(), "{error:?}");
+            let mut bd: native::WGPUBufferDescriptor = std::mem::zeroed();
+            bd.usage = (native::WGPUBufferUsage_CopyDst | native::WGPUBufferUsage_Storage) as _;
+            bd.size = 64;
+            let buffer = wgpuDeviceAdoptBufferExt(device, id_to_u64(buffer_id), Some(&bd));
+            assert!(!buffer.is_null(), "{}", last());
+            assert_eq!(crate::wgpuBufferGetSize(buffer), 64);
+            crate::wgpuBufferDestroy(buffer);
+            crate::wgpuBufferRelease(buffer);
+            global
+                .queue_write_buffer(queue_id, buffer_id, 0, &[1u8; 16])
+                .expect("the host's buffer outlives the adopted handle");
+            assert!(wgpuDeviceAdoptBufferExt(device, dead, Some(&bd)).is_null(), "dead buffer");
+            assert!(!last().is_empty());
+            assert!(wgpuDeviceAdoptBufferExt(device, id_to_u64(buffer_id), None).is_null());
+            assert!(last().contains("null descriptor"), "{}", last());
+            global.buffer_drop(buffer_id);
             // A device that is not on the adapter given.
             if let Some(&other) = adapters.get(1) {
                 let other_adapter = wgpuInstanceAdoptAdapterExt(instance, id_to_u64(other));

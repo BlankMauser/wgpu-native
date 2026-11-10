@@ -99,10 +99,12 @@ pub struct WGPUBufferImpl {
     id: id::BufferId,
     error_sink: ErrorSink,
     data: BufferData,
+    /// The host owns it (adopt_core.rs): releasing the handle does not drop it.
+    adopted: bool,
 }
 impl Drop for WGPUBufferImpl {
     fn drop(&mut self) {
-        if !thread::panicking() {
+        if !thread::panicking() && !self.adopted {
             let context = &self.context;
             context.buffer_drop(self.id);
         }
@@ -962,6 +964,11 @@ pub unsafe extern "C" fn wgpuBindGroupLayoutRelease(
 pub unsafe extern "C" fn wgpuBufferDestroy(buffer: native::WGPUBuffer) {
     let (buffer_id, context) = {
         let buffer = buffer.as_ref().expect("invalid buffer");
+        if buffer.adopted {
+            // The host owns an adopted buffer (adopt_core.rs): destroying it here would destroy the host's.
+            log::warn!("wgpuBufferDestroy ignored: the buffer is adopted from a host that owns it");
+            return;
+        }
         (buffer.id, &buffer.context)
     };
     // Per spec, no error to report. Even calling destroy multiple times is valid.
@@ -2013,6 +2020,7 @@ pub unsafe extern "C" fn wgpuDeviceCreateBuffer(
             usage: descriptor.usage,
             size: descriptor.size,
         },
+        adopted: false,
     }))
 }
 
