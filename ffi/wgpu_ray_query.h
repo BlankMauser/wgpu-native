@@ -10,6 +10,11 @@
  * `acceleration_structure` global (`enable wgpu_ray_query;`).
  *
  * Errors go to the device's error sink, like every other call's.
+ *
+ * In WGSL, declare a `ray_query` variable at function scope, not inside a
+ * loop: naga 30.0.1 zero-initialises a loop's variables on every iteration,
+ * and a zero value of a ray query panics its HLSL writer (DX12); on llvmpipe
+ * the pipeline is refused and the device is reported lost.
  */
 #ifndef WGPU_RAY_QUERY_H_
 #define WGPU_RAY_QUERY_H_
